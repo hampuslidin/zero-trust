@@ -1,0 +1,8 @@
+[package]
+name = "prover"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sudoku = { path = "../sudoku" }
+tiny_http = "0.12.0"
