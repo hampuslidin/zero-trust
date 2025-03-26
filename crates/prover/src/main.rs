@@ -70,42 +70,21 @@ fn run_verification_server() {
                         break 'post_edge;
                     };
 
-                    if edge_bytes.len() != 16 {
+                    let Ok(edges) = <Vec<Edge>>::from_bytes(&edge_bytes) else {
                         let _ = request.respond(Response::empty(400));
                         break 'post_edge;
-                    }
+                    };
 
-                    let edge = Edge::from_bytes([
-                        edge_bytes[0],
-                        edge_bytes[1],
-                        edge_bytes[2],
-                        edge_bytes[3],
-                        edge_bytes[4],
-                        edge_bytes[5],
-                        edge_bytes[6],
-                        edge_bytes[7],
-                        edge_bytes[8],
-                        edge_bytes[9],
-                        edge_bytes[10],
-                        edge_bytes[11],
-                        edge_bytes[12],
-                        edge_bytes[13],
-                        edge_bytes[14],
-                        edge_bytes[15],
-                    ]);
+                    let verification_data: Vec<_> = edges
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, edge)| {
+                            (graph.get_copied(edge), verification_keys[i].get(edge))
+                        })
+                        .collect();
 
-                    let values = graph.get(edge);
-                    let keys = verification_keys.get(edge);
-
-                    let mut verification_data = Vec::with_capacity(18);
-                    verification_data.push(*values.0);
-                    verification_data.push(*values.1);
-                    verification_data.extend(keys.0.to_le_bytes());
-                    verification_data.extend(keys.1.to_le_bytes());
-
-                    debug_assert_eq!(verification_data.len(), 18);
-
-                    let _ = request.respond(Response::from_data(verification_data.clone()));
+                    let verification_data_bytes = verification_data.to_bytes();
+                    let _ = request.respond(Response::from_data(verification_data_bytes));
                 }
 
                 _ => {
@@ -113,7 +92,7 @@ fn run_verification_server() {
                 }
             }
 
-            verification_keys.take();
+            verification_keys.clear();
         }
     });
 }

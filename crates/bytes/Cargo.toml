@@ -5,4 +5,3 @@ edition.workspace = true
 
 [dependencies]
 derive-deftly = { workspace = true }
-sha2 = { workspace = true }

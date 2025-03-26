@@ -1,12 +1,12 @@
+use std::{
+    error::Error,
+    fmt::{self, Display, Formatter},
+    mem::{self, MaybeUninit},
+};
+
 #[doc(hidden)]
 pub use derive_deftly;
 use derive_deftly::define_derive_deftly;
-use sha2::{
-    Sha256,
-    digest::{Output, OutputSizeUser},
-};
-use std::mem::ManuallyDrop;
-use std::{array, mem, mem::MaybeUninit};
 
 derive_deftly::template_export_semver_check!("1.0.1");
 
@@ -17,19 +17,40 @@ pub trait Bytes {
         writer.finish()
     }
 
-    fn from_bytes(bytes: &[u8]) -> Self
+    fn from_bytes(bytes: &[u8]) -> Result<Self, BytesError>
     where
         Self: Sized,
     {
         let mut reader = BytesReader::new(bytes);
-        Self::read(&mut reader)
+        let output = Self::read(&mut reader)?;
+        reader.finish()?;
+        Ok(output)
     }
 
     fn required_size(&self) -> usize;
     fn write(&self, writer: &mut BytesWriter);
-    fn read(reader: &mut BytesReader) -> Self
+    fn read(reader: &mut BytesReader) -> Result<Self, BytesError>
     where
         Self: Sized;
+}
+
+#[derive(Debug)]
+pub enum BytesError {
+    EndOfData(usize),
+    TrailingData(usize),
+    UsizeTooSmall,
+}
+
+impl Error for BytesError {}
+
+impl Display for BytesError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Self::EndOfData(pos) => write!(f, "end of data at position {pos}"),
+            Self::TrailingData(pos) => write!(f, "trailing data at position {pos}"),
+            Self::UsizeTooSmall => write!(f, "data could not fit into `usize`"),
+        }
+    }
 }
 
 pub struct BytesWriter {
@@ -64,20 +85,192 @@ impl BytesWriter {
     }
 }
 
-pub struct BytesReader<'a>(&'a [u8]);
+pub struct BytesReader<'a> {
+    data: &'a [u8],
+    read: usize,
+}
 
 impl<'a> BytesReader<'a> {
     fn new(bytes: &'a [u8]) -> Self {
-        Self(bytes)
+        Self {
+            data: bytes,
+            read: 0,
+        }
     }
 
-    fn read(&mut self, bytes: &mut [MaybeUninit<u8>]) {
-        assert!(bytes.len() <= self.0.len());
+    fn read(&mut self, bytes: &mut [MaybeUninit<u8>]) -> Result<(), BytesError> {
+        if self.read + bytes.len() > self.data.len() {
+            return Err(BytesError::EndOfData(self.read));
+        } 
 
         // SAFETY: `MaybeUninit<u8>` has the same size and layout as `u8`.
-        bytes.copy_from_slice(unsafe { &*(&self.0[..bytes.len()] as *const _ as *const _) });
+        bytes.copy_from_slice(unsafe { mem::transmute(&self.data[self.read..self.read + bytes.len()]) });
 
-        self.0 = &self.0[bytes.len()..];
+        self.read += bytes.len();
+
+        Ok(())
+    }
+
+    fn finish(self) -> Result<(), BytesError> {
+        if self.read == self.data.len() {
+            Ok(())
+        } else {
+            Err(BytesError::TrailingData(self.read))
+        }
+    }
+}
+
+macro_rules! impl_bytes_for_uint {
+    ($ty:ty) => {
+        impl Bytes for $ty {
+            fn required_size(&self) -> usize {
+                size_of::<$ty>()
+            }
+
+            fn write(&self, writer: &mut BytesWriter) {
+                writer.write(&self.to_le_bytes());
+            }
+
+            fn read(reader: &mut BytesReader) -> Result<Self, BytesError> {
+                let mut bytes = [MaybeUninit::uninit(); size_of::<$ty>()];
+                reader.read(&mut bytes)?;
+
+                // SAFETY: `bytes` is fully initialized by the reader.
+                Ok(<$ty>::from_le_bytes(unsafe { mem::transmute_copy(&bytes) }))
+            }
+        }
+    };
+}
+
+impl_bytes_for_uint!(u8);
+impl_bytes_for_uint!(u64);
+
+impl Bytes for usize {
+    fn required_size(&self) -> usize {
+        u64::required_size(&(*self as u64))
+    }
+
+    fn write(&self, writer: &mut BytesWriter) {
+        u64::write(&(*self as u64), writer);
+    }
+
+    fn read(reader: &mut BytesReader) -> Result<Self, BytesError> {
+        u64::read(reader)?.try_into().map_err(|_| BytesError::UsizeTooSmall)
+    }
+}
+
+macro_rules! impl_bytes_for_tuple {
+    ($(($i:tt, $t:ident)),+) => {
+        impl<$($t),+> Bytes for ($($t),+) 
+        where
+            $($t: Bytes,)+
+        {
+            fn required_size(&self) -> usize {
+                $(self.$i.required_size() +)+ 0
+            }
+
+            fn write(&self, writer: &mut BytesWriter) {
+                $(self.$i.write(writer);)+
+            }
+
+            fn read(reader: &mut BytesReader) -> Result<Self, BytesError> {
+                Ok(($($t::read(reader)?),+))
+            }
+        }
+    };
+}
+
+impl_bytes_for_tuple!((0, T1), (1, T2));
+impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3));
+impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4));
+impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4), (4, T5));
+impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4), (4, T5), (5, T6));
+impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4), (4, T5), (5, T6), (6, T7));
+impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4), (4, T5), (5, T6), (6, T7), (7, T8));
+impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4), (4, T5), (5, T6), (6, T7), (7, T8), (8, T9));
+impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4), (4, T5), (5, T6), (6, T7), (7, T8), (8, T9), (9, T10));
+impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4), (4, T5), (5, T6), (6, T7), (7, T8), (8, T9), (9, T10), (10, T11));
+impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4), (4, T5), (5, T6), (6, T7), (7, T8), (8, T9), (9, T10), (10, T11), (11, T12));
+
+impl<const N: usize, T> Bytes for [T; N]
+where
+    T: Bytes,
+{
+    fn required_size(&self) -> usize {
+        self.iter().map(|elem| elem.required_size()).sum()
+    }
+
+    fn write(&self, writer: &mut BytesWriter) {
+        for elem in self {
+            elem.write(writer);
+        }
+    }
+
+    fn read(reader: &mut BytesReader) -> Result<Self, BytesError> {
+        let mut elems = [const { MaybeUninit::uninit() }; N];
+        for i in 0..N {
+            elems[i].write(T::read(reader)?);
+        }
+
+        // SAFETY: `elems` is fully initialized by the reader.
+        Ok(unsafe { mem::transmute_copy(&elems) })
+    }
+}
+
+impl<T> Bytes for Box<[T]>
+where
+    T: Bytes,
+{
+    fn required_size(&self) -> usize {
+        8 + self.iter().map(|elem| elem.required_size()).sum::<usize>()
+    }
+
+    fn write(&self, writer: &mut BytesWriter) {
+        let len = self.len();
+        (len as u64).write(writer);
+
+        for elem in self {
+            elem.write(writer);
+        }
+    }
+
+    fn read(reader: &mut BytesReader) -> Result<Self, BytesError> {
+        let len = u64::read(reader)?.try_into().map_err(|_| BytesError::UsizeTooSmall)?;
+        let mut elems = Box::new_uninit_slice(len);
+        for i in 0..len {
+            elems[i].write(T::read(reader)?);
+        }
+
+        // SAFETY: `elems` is fully initialized by the reader.
+        Ok(unsafe { elems.assume_init() })
+    }
+}
+
+impl<T> Bytes for Vec<T>
+where
+    T: Bytes,
+{
+    fn required_size(&self) -> usize {
+        8 + self.iter().map(|elem| elem.required_size()).sum::<usize>()
+    }
+
+    fn write(&self, writer: &mut BytesWriter) {
+        let len = self.len();
+        (len as u64).write(writer);
+
+        for elem in self {
+            elem.write(writer);
+        }
+    }
+
+    fn read(reader: &mut BytesReader) -> Result<Self, BytesError> {
+        let len = u64::read(reader)?.try_into().map_err(|_| BytesError::UsizeTooSmall)?;
+        let mut elems = Vec::with_capacity(len);
+        for _ in 0..len {
+            elems.push(T::read(reader)?);
+        }
+
+        Ok(elems)
     }
 }
 
@@ -102,147 +295,10 @@ define_derive_deftly! {
         }
 
         #[allow(unused)]
-        fn read(reader: &mut $crate::BytesReader) -> Self {
-            Self {
-                $($fname: <$ftype as $crate::Bytes>::read(reader),)
-            }
-        }
-    }
-}
-
-macro_rules! impl_bytes_for_uint {
-    ($ty:ty) => {
-        impl Bytes for $ty {
-            fn required_size(&self) -> usize {
-                size_of::<$ty>()
-            }
-
-            fn write(&self, writer: &mut BytesWriter) {
-                writer.write(&self.to_le_bytes());
-            }
-
-            fn read(reader: &mut BytesReader) -> Self {
-                let mut bytes = [MaybeUninit::uninit(); size_of::<$ty>()];
-                reader.read(&mut bytes);
-
-                // SAFETY: `bytes` is fully initialized by the reader.
-                unsafe { *(&bytes as *const _ as *const _) }
-            }
-        }
-    };
-}
-
-impl_bytes_for_uint!(u8);
-impl_bytes_for_uint!(u64);
-
-impl Bytes for usize {
-    fn required_size(&self) -> usize {
-        u64::required_size(&(*self as u64))
-    }
-
-    fn write(&self, writer: &mut BytesWriter) {
-        u64::write(&(*self as u64), writer);
-    }
-
-    fn read(reader: &mut BytesReader) -> Self {
-        let size = u64::read(reader);
-        size.try_into().expect("size too large")
-    }
-}
-
-impl<const N: usize, T> Bytes for [T; N]
-where
-    T: Bytes,
-{
-    fn required_size(&self) -> usize {
-        self.iter().map(|elem| elem.required_size()).sum()
-    }
-
-    fn write(&self, writer: &mut BytesWriter) {
-        for elem in self {
-            elem.write(writer);
-        }
-    }
-
-    fn read(reader: &mut BytesReader) -> Self {
-        array::from_fn(|_| T::read(reader))
-    }
-}
-
-impl<T> Bytes for Box<[T]>
-where
-    T: Bytes,
-{
-    fn required_size(&self) -> usize {
-        8 + self.iter().map(|elem| elem.required_size()).sum::<usize>()
-    }
-
-    fn write(&self, writer: &mut BytesWriter) {
-        let size = self.len();
-        (size as u64).write(writer);
-
-        for elem in self {
-            elem.write(writer);
-        }
-    }
-
-    fn read(reader: &mut BytesReader) -> Self {
-        let len = u64::read(reader);
-        let mut elems = Box::new_uninit_slice(len.try_into().expect("size too large"));
-        for i in 0..len as usize {
-            elems[i].write(T::read(reader));
-        }
-
-        // SAFETY: `elems` is fully initialized by the reader.
-        unsafe { elems.assume_init() }
-    }
-}
-
-impl<T> Bytes for Vec<T>
-where
-    T: Bytes,
-{
-    fn required_size(&self) -> usize {
-        8 + self.iter().map(|elem| elem.required_size()).sum::<usize>()
-    }
-
-    fn write(&self, writer: &mut BytesWriter) {
-        let size = self.len();
-        (size as u64).write(writer);
-
-        for elem in self {
-            elem.write(writer);
-        }
-    }
-
-    fn read(reader: &mut BytesReader) -> Self {
-        let len = u64::read(reader);
-        let mut elems = Vec::with_capacity(len.try_into().expect("size to large"));
-        for _ in 0..len as usize {
-            elems.push(T::read(reader));
-        }
-
-        elems
-    }
-}
-
-impl Bytes for Output<Sha256> {
-    fn required_size(&self) -> usize {
-        <Sha256 as OutputSizeUser>::output_size()
-    }
-
-    fn write(&self, writer: &mut BytesWriter) {
-        writer.write(self.as_slice());
-    }
-
-    fn read(reader: &mut BytesReader) -> Self {
-        let mut bytes = Box::new_uninit_slice(<Sha256 as OutputSizeUser>::output_size());
-        reader.read(&mut bytes);
-
-        // SAFETY: `bytes` has the same size and layout as `Output<Sha256>`.
-        unsafe {
-            let bytes = ManuallyDrop::new(bytes);
-            mem::transmute_copy(&bytes)
+        fn read(reader: &mut $crate::BytesReader) -> Result<Self, $crate::BytesError> {
+            Ok(Self {
+                $($fname: <$ftype as $crate::Bytes>::read(reader)?,)
+            })
         }
     }
 }

@@ -7,14 +7,15 @@ use std::{
 
 use derive_deftly::Deftly;
 use rand::prelude::*;
-use sha2::{Digest, Sha256, digest::Output};
+use sha2::{Digest, Sha256};
 
 use bytes::derive_deftly_template_Bytes;
 
-pub fn hash(value: u8, key: u64) -> Output<Sha256> {
+pub fn hash(value: u8, key: u64) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update((value as u64 ^ key).to_le_bytes());
-    hasher.finalize()
+    let output = hasher.finalize();
+    output.as_slice().try_into().expect("size is not 32 bytes")
 }
 
 #[derive(Clone, Debug, Deftly)]
@@ -24,7 +25,7 @@ pub struct Graph<const NUM_NODES: usize, T> {
     pub edges: Box<[Edge]>,
 }
 
-pub type EncryptedGraph<const NUM_NODES: usize> = Graph<NUM_NODES, Output<Sha256>>;
+pub type EncryptedGraph<const NUM_NODES: usize> = Graph<NUM_NODES, [u8; 32]>;
 
 impl<const NUM_NODES: usize, T> Graph<NUM_NODES, T> {
     pub fn num_edges(&self) -> usize {
@@ -38,6 +39,10 @@ impl<const NUM_NODES: usize, T> Graph<NUM_NODES, T> {
 
     pub fn get(&self, edge: Edge) -> (&T, &T) {
         (&self[edge.0], &self[edge.1])
+    }
+
+    pub fn get_copied(&self, edge: Edge) -> (T, T) where T: Copy {
+        (self[edge.0], self[edge.1])
     }
 }
 

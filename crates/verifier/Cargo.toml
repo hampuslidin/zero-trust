@@ -4,5 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+bytes = { path = "../bytes" }
+graph = { path = "../graph" }
 sudoku = { path = "../sudoku" }
 ureq = "3.0.10"

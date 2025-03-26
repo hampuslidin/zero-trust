@@ -8,4 +8,3 @@ edition = "2024"
 
 [workspace.dependencies]
 derive-deftly = "1.0.1"
-sha2 = "0.10.8"
