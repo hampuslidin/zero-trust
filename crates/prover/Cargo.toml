@@ -4,5 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+bytes = { path = "../bytes" }
+crossterm = "0.28.1"
+graph = { path = "../graph" }
 sudoku = { path = "../sudoku" }
 tiny_http = "0.12.0"

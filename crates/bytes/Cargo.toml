@@ -1,0 +1,8 @@
+[package]
+name = "bytes"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+derive-deftly = { workspace = true }
+sha2 = { workspace = true }

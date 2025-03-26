@@ -1,7 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/prover","crates/sudoku", "crates/verifier"]
+members = ["crates/bytes", "crates/graph", "crates/prover", "crates/sudoku", "crates/verifier"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+
+[workspace.dependencies]
+derive-deftly = "1.0.1"
+sha2 = "0.10.8"
