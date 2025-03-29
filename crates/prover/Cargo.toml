@@ -7,5 +7,6 @@ edition.workspace = true
 bytes = { path = "../bytes" }
 crossterm = "0.28.1"
 graph = { path = "../graph" }
+rand = { workspace = true }
 sudoku = { path = "../sudoku" }
 tiny_http = "0.12.0"

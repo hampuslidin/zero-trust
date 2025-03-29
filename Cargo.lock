@@ -440,6 +440,7 @@ dependencies = [
  "bytes 0.1.0",
  "crossterm",
  "graph",
+ "rand",
  "sudoku",
  "tiny_http",
 ]
@@ -776,6 +777,7 @@ version = "0.1.0"
 dependencies = [
  "bytes 0.1.0",
  "graph",
+ "rand",
  "sudoku",
  "ureq",
 ]

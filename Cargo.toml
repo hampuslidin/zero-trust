@@ -8,3 +8,4 @@ edition = "2024"
 
 [workspace.dependencies]
 derive-deftly = "1.0.1"
+rand = "0.9.0"

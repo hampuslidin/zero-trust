@@ -1,6 +1,8 @@
 use graph::{Edge, Graph};
+use std::cell::LazyCell;
 use std::fmt::{self, Display, Formatter};
 
+#[macro_export]
 macro_rules! sudoku {
     (@impl [$($cells:tt)*] [$($rows:tt)*] [$($given:tt)*] ($x:expr, $y:expr) _ $($rest:tt)+ ) => {
         sudoku!(@impl [$($cells)* 0,] [$($rows)*] [$($given)*] ($x + 1, $y) $($rest)+ )
@@ -20,7 +22,7 @@ macro_rules! sudoku {
                 $($rows)+
                 [$($cells)+],
             ],
-            given: [$($given)*],
+            given: Box::new([$($given)*]),
         }
     };
 
@@ -33,29 +35,30 @@ macro_rules! sudoku {
     };
 }
 
-pub const PUZZLE: Sudoku<38> = sudoku! {
-    4 _ _ _ 9 6 2 _ 8;
-    3 _ 8 1 _ _ _ 9 _;
-    9 6 1 _ _ _ 7 _ _;
-    _ _ 3 4 _ 5 9 6 _;
-    6 _ _ 9 2 8 _ 7 4;
-    _ _ 4 7 _ _ 1 _ _;
-    _ _ 9 _ _ 2 _ _ 1;
-    _ _ _ 8 3 1 6 4 _;
-    _ _ _ _ 4 _ _ 2 7;
-};
+pub const PUZZLE: LazyCell<Sudoku> = LazyCell::new(|| {
+    sudoku! {
+        4 _ _ _ 9 6 2 _ 8;
+        3 _ 8 1 _ _ _ 9 _;
+        9 6 1 _ _ _ 7 _ _;
+        _ _ 3 4 _ 5 9 6 _;
+        6 _ _ 9 2 8 _ 7 4;
+        _ _ 4 7 _ _ 1 _ _;
+        _ _ 9 _ _ 2 _ _ 1;
+        _ _ _ 8 3 1 6 4 _;
+        _ _ _ _ 4 _ _ 2 7;
+    }
+});
 
-pub struct Sudoku<const GIVEN: usize> {
+#[derive(Clone)]
+pub struct Sudoku {
     pub grid: [[u8; 9]; 9],
-    pub given: [(usize, usize); GIVEN],
+    pub given: Box<[(usize, usize)]>,
 }
 
-// One node for each cell, as well as 9 constraint nodes for the given cells.
-const NUM_GRAPH_NODES: usize = 90;
-
-impl<const GIVEN: usize> From<&Sudoku<GIVEN>> for Graph<NUM_GRAPH_NODES, u8> {
-    fn from(sudoku: &Sudoku<GIVEN>) -> Self {
-        let mut nodes = [0; NUM_GRAPH_NODES];
+impl From<&Sudoku> for Graph<u8> {
+    fn from(sudoku: &Sudoku) -> Self {
+        // One node for each cell, as well as nine nodes for each constraint for the given cells.
+        let mut nodes = Box::new_uninit_slice(90);
 
         // Each row has 9 * 8 / 2 edges and there are 9 rows, making a total of 324 edges.
         // By symmetry, each column has the same number of edges as the rows.
@@ -63,19 +66,22 @@ impl<const GIVEN: usize> From<&Sudoku<GIVEN>> for Graph<NUM_GRAPH_NODES, u8> {
         // Combined, the rows, columns, and 3-by-3 grids form 2 * 324 + 162 = 810 edges.
         // Each given number has 8 edges, one for each constraint node that is not equal to the
         // given number.
-        let expected_edges = 810 + 8 * GIVEN;
-        let mut edges = Vec::with_capacity(expected_edges);
+        let expected_num_edges = 810 + 8 * sudoku.given.len();
+        let mut edges = Box::new_uninit_slice(expected_num_edges);
+        let mut num_edges = 0;
 
         for (y, row) in sudoku.grid.into_iter().enumerate() {
             for (x, cell) in row.into_iter().enumerate() {
-                nodes[9 * y + x] = cell;
+                nodes[9 * y + x].write(cell);
 
                 for i in x + 1..9 {
-                    edges.push(Edge(9 * y + x, 9 * y + i));
+                    edges[num_edges].write(Edge(9 * y + x, 9 * y + i));
+                    num_edges += 1;
                 }
 
                 for j in y + 1..9 {
-                    edges.push(Edge(9 * y + x, 9 * j + x));
+                    edges[num_edges].write(Edge(9 * y + x, 9 * j + x));
+                    num_edges += 1;
                 }
 
                 for (i, j) in (y + 1..(y + 3) / 3 * 3).flat_map(|j| {
@@ -84,19 +90,28 @@ impl<const GIVEN: usize> From<&Sudoku<GIVEN>> for Graph<NUM_GRAPH_NODES, u8> {
                         .filter(|i| *i != x)
                         .map(move |i| (i, j))
                 }) {
-                    edges.push(Edge(9 * y + x, 9 * j + i));
+                    edges[num_edges].write(Edge(9 * y + x, 9 * j + i));
+                    num_edges += 1;
                 }
             }
+        }
+
+        for v in 1..=9 {
+            nodes[80 + v as usize].write(v);
         }
 
         for (i, j) in sudoku.given.iter().copied() {
             let value = sudoku.grid[j][i];
             for v in (1..=9).filter(|v| *v != value) {
-                edges.push(Edge(9 * j + i, 80 + v as usize));
+                edges[num_edges].write(Edge(9 * j + i, 80 + v as usize));
+                num_edges += 1;
             }
         }
 
-        debug_assert_eq!(edges.len(), expected_edges);
+        debug_assert_eq!(num_edges, expected_num_edges);
+
+        // SAFETY: All elements have been initialized by the logic of the comments in this function.
+        let (nodes, edges) = unsafe { (nodes.assume_init(), edges.assume_init()) };
 
         Self {
             nodes,
@@ -105,7 +120,7 @@ impl<const GIVEN: usize> From<&Sudoku<GIVEN>> for Graph<NUM_GRAPH_NODES, u8> {
     }
 }
 
-impl<const GIVEN: usize> Display for Sudoku<GIVEN> {
+impl Display for Sudoku {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         writeln!(f, "╔═══╤═══╤═══╦═══╤═══╤═══╦═══╤═══╤═══╗")?;
         for (y, row) in self.grid.into_iter().enumerate() {

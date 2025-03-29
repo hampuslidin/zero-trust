@@ -6,5 +6,6 @@ edition.workspace = true
 [dependencies]
 bytes = { path = "../bytes" }
 graph = { path = "../graph" }
+rand = { workspace = true }
 sudoku = { path = "../sudoku" }
 ureq = "3.0.10"

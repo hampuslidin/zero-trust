@@ -1,64 +1,69 @@
 use std::{
     error::Error,
-    fmt,
-    fmt::{Display, Formatter},
+    fmt::{self, Display, Formatter},
     io::{self, Write},
     thread,
     time::Duration,
 };
 
 use bytes::Bytes;
-use graph::{Edge, EncryptedGraph};
-use sudoku::PUZZLE;
+use graph::{Edge, EncryptedNode, Graph};
+use rand::prelude::*;
 
 fn main() {
+    let graph = Graph::from(&*sudoku::PUZZLE);
+    let mut edges = graph.edges.clone();
+
     loop {
         print!("Verifying");
         io::stdout().flush().expect("flush should succeed");
 
-        match verify() {
-            Ok(()) => println!(" - Success"),
-            Err(err) => println!(" - Failure: {err}"),
+        match verify(&mut edges) {
+            Ok(()) => println!(" - Solved"),
+            Err(err) => println!(" - {err}"),
         }
 
-        thread::sleep(Duration::from_millis(1000));
+        thread::sleep(Duration::from_millis(100));
     }
 }
 
-fn verify() -> Result<(), Box<dyn Error>> {
-    for _ in 0..10 {
-        let encrypted_graph_bytes: Vec<u8> = ureq::get("http://127.0.0.1:8000/graph?count=10")
-            .call()?
-            .body_mut()
-            .read_to_vec()?;
+fn verify(edges: &mut Box<[Edge]>) -> Result<(), Box<dyn Error>> {
+    let encrypted_node_bytes: Vec<u8> = ureq::get("http://127.0.0.1:8000/nodes")
+        .call()?
+        .body_mut()
+        .read_to_vec()?;
+    let encrypted_nodes: Vec<Box<[EncryptedNode]>> = Bytes::from_bytes(&encrypted_node_bytes)?;
 
-        println!("{:0x} {:0x} {:0x} {:0x}", encrypted_graph_bytes[0], encrypted_graph_bytes[1], encrypted_graph_bytes[2], encrypted_graph_bytes[3]);
-        let encrypted_graphs: Vec<EncryptedGraph<{ PUZZLE.given.len() }>> = Bytes::from_bytes(&encrypted_graph_bytes)?;
+    let mut rng = rand::rng();
+    edges.shuffle(&mut rng);
 
-        let edges: Vec<Edge> = encrypted_graphs.iter().map(|graph| graph.random_edge()).collect();
+    let verification_data_bytes: Vec<u8> = ureq::post("http://127.0.0.1:8000/verify")
+        .send(&*edges.to_bytes())?
+        .body_mut()
+        .read_to_vec()?;
 
-        let verification_data_bytes: Vec<u8> = ureq::post("http://127.0.0.1:8000/edge")
-            .send(&*edges.to_bytes())?
-            .body_mut()
-            .read_to_vec()?;
+    let Ok(verification_data) = <Vec<((u8, u8), (u64, u64))>>::from_bytes(&verification_data_bytes)
+    else {
+        return Err(VerificationError::InvalidVerificationData.into());
+    };
 
-        let Ok(verification_data) = <Vec<((u8, u8), (u64, u64))>>::from_bytes(&verification_data_bytes) else {
-            return Err(VerificationError::InvalidVerificationData.into());
-        };
+    for (i, (values, keys)) in verification_data.into_iter().enumerate() {
+        let edge = edges[i];
 
+        if values.0 == 0 || values.1 == 0 {
+            return Err(VerificationError::Unsolved.into());
+        }
 
-        for (i, (values, keys)) in verification_data.into_iter().enumerate() {
-            if values.0 == values.1 {
-                return Err(VerificationError::AdjacentIdenticalNodes.into());
-            }
+        if values.0 == values.1 {
+            return Err(VerificationError::UnsatisfiedConstraint.into());
+        }
 
-            if encrypted_graphs[i][edges[i].0] != graph::hash(values.0, keys.0) {
-                return Err(VerificationError::HashMismatch.into());
-            }
+        if encrypted_nodes[i][edge.0] != graph::hash(values.0, keys.0) {
+            return Err(VerificationError::IncorrectHash.into());
+        }
 
-            if encrypted_graphs[i][edges[i].1] != graph::hash(values.1, keys.1) {
-                return Err(VerificationError::HashMismatch.into());
-            }
+        if encrypted_nodes[i][edge.1] != graph::hash(values.1, keys.1) {
+            return Err(VerificationError::IncorrectHash.into());
         }
     }
 
@@ -67,9 +72,10 @@ fn verify() -> Result<(), Box<dyn Error>> {
 
 #[derive(Debug)]
 enum VerificationError {
+    IncorrectHash,
     InvalidVerificationData,
-    AdjacentIdenticalNodes,
-    HashMismatch,
+    UnsatisfiedConstraint,
+    Unsolved,
 }
 
 impl Error for VerificationError {}
@@ -77,9 +83,10 @@ impl Error for VerificationError {}
 impl Display for VerificationError {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Self::InvalidVerificationData => write!(f, "invalid verification data"),
-            Self::AdjacentIdenticalNodes => write!(f, "adjacent identical nodes"),
-            Self::HashMismatch => write!(f, "hash mismatch"),
+            Self::IncorrectHash => write!(f, "Incorrect hash"),
+            Self::InvalidVerificationData => write!(f, "Invalid verification data"),
+            Self::UnsatisfiedConstraint => write!(f, "Unsatisfied constraint"),
+            Self::Unsolved => write!(f, "Unsolved"),
         }
     }
 }
