@@ -1,15 +1,12 @@
-use std::{
-    error::Error,
-    fmt::{self, Display, Formatter},
-    ops::Index,
-};
+use std::ops::Index;
 
-use bytes::derive_deftly_template_Bytes;
 use derive_deftly::Deftly;
 use rand::Rng;
 use sha2::{Digest, Sha256};
 
-pub fn hash(value: u8, key: u64) -> [u8; 32] {
+use bytes::derive_deftly_template_Bytes;
+
+pub fn hash(value: u8, key: u64) -> EncryptedNode {
     let mut hasher = Sha256::new();
     hasher.update((value as u64 ^ key).to_le_bytes());
     let output = hasher.finalize();
@@ -48,37 +45,19 @@ impl Graph<u8> {
 
     pub fn encrypt(&self) -> (Box<[EncryptedNode]>, Keys) {
         let mut rng = rand::rng();
-        let mut encrypted_nodes = Box::new_uninit_slice(self.nodes.len());
-        let mut keys = Box::new_uninit_slice(self.nodes.len());
+        let mut encrypted_nodes = Vec::with_capacity(self.nodes.len());
+        let mut keys = Vec::with_capacity(self.nodes.len());
         for (node, (encrypted_node, key)) in self
             .nodes
             .iter()
             .zip(encrypted_nodes.iter_mut().zip(keys.iter_mut()))
         {
             let rand_key = rng.random();
-            encrypted_node.write(hash(*node, rand_key));
-            key.write(rand_key);
+            *encrypted_node = hash(*node, rand_key);
+            *key = rand_key;
         }
 
-        // SAFETY: `keys`, `encrypted_nodes`, and `self.nodes` all have the same number of elements,
-        // so the zipped elements above will also have the same number of elements. Thus, all
-        // elements have been initialized.
-        unsafe { (encrypted_nodes.assume_init(), Keys(keys.assume_init())) }
-    }
-}
-
-#[derive(Debug)]
-pub enum GraphError {
-    InvalidBytes,
-}
-
-impl Error for GraphError {}
-
-impl Display for GraphError {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            Self::InvalidBytes => write!(f, "invalid bytes"),
-        }
+        (encrypted_nodes.into(), Keys(keys.into()))
     }
 }
 

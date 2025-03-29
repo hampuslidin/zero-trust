@@ -71,7 +71,7 @@ impl BytesWriter {
 
         // SAFETY: `MaybeUninit<u8>` has the same size and layout as `u8`.
         self.data[self.written..self.written + bytes.len()]
-            .copy_from_slice(unsafe { &*(bytes as *const _ as *const _) });
+            .copy_from_slice(unsafe { mem::transmute(bytes) });
 
         self.written += bytes.len();
     }
@@ -101,10 +101,12 @@ impl<'a> BytesReader<'a> {
     fn read(&mut self, bytes: &mut [MaybeUninit<u8>]) -> Result<(), BytesError> {
         if self.read + bytes.len() > self.data.len() {
             return Err(BytesError::EndOfData(self.read));
-        } 
+        }
 
         // SAFETY: `MaybeUninit<u8>` has the same size and layout as `u8`.
-        bytes.copy_from_slice(unsafe { mem::transmute(&self.data[self.read..self.read + bytes.len()]) });
+        bytes.copy_from_slice(unsafe {
+            mem::transmute(&self.data[self.read..self.read + bytes.len()])
+        });
 
         self.read += bytes.len();
 
@@ -155,13 +157,15 @@ impl Bytes for usize {
     }
 
     fn read(reader: &mut BytesReader) -> Result<Self, BytesError> {
-        u64::read(reader)?.try_into().map_err(|_| BytesError::UsizeTooSmall)
+        u64::read(reader)?
+            .try_into()
+            .map_err(|_| BytesError::UsizeTooSmall)
     }
 }
 
 macro_rules! impl_bytes_for_tuple {
     ($(($i:tt, $t:ident)),+) => {
-        impl<$($t),+> Bytes for ($($t),+) 
+        impl<$($t),+> Bytes for ($($t),+)
         where
             $($t: Bytes,)+
         {
@@ -185,12 +189,75 @@ impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3));
 impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4));
 impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4), (4, T5));
 impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4), (4, T5), (5, T6));
-impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4), (4, T5), (5, T6), (6, T7));
-impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4), (4, T5), (5, T6), (6, T7), (7, T8));
-impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4), (4, T5), (5, T6), (6, T7), (7, T8), (8, T9));
-impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4), (4, T5), (5, T6), (6, T7), (7, T8), (8, T9), (9, T10));
-impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4), (4, T5), (5, T6), (6, T7), (7, T8), (8, T9), (9, T10), (10, T11));
-impl_bytes_for_tuple!((0, T1), (1, T2), (2, T3), (3, T4), (4, T5), (5, T6), (6, T7), (7, T8), (8, T9), (9, T10), (10, T11), (11, T12));
+impl_bytes_for_tuple!(
+    (0, T1),
+    (1, T2),
+    (2, T3),
+    (3, T4),
+    (4, T5),
+    (5, T6),
+    (6, T7)
+);
+impl_bytes_for_tuple!(
+    (0, T1),
+    (1, T2),
+    (2, T3),
+    (3, T4),
+    (4, T5),
+    (5, T6),
+    (6, T7),
+    (7, T8)
+);
+impl_bytes_for_tuple!(
+    (0, T1),
+    (1, T2),
+    (2, T3),
+    (3, T4),
+    (4, T5),
+    (5, T6),
+    (6, T7),
+    (7, T8),
+    (8, T9)
+);
+impl_bytes_for_tuple!(
+    (0, T1),
+    (1, T2),
+    (2, T3),
+    (3, T4),
+    (4, T5),
+    (5, T6),
+    (6, T7),
+    (7, T8),
+    (8, T9),
+    (9, T10)
+);
+impl_bytes_for_tuple!(
+    (0, T1),
+    (1, T2),
+    (2, T3),
+    (3, T4),
+    (4, T5),
+    (5, T6),
+    (6, T7),
+    (7, T8),
+    (8, T9),
+    (9, T10),
+    (10, T11)
+);
+impl_bytes_for_tuple!(
+    (0, T1),
+    (1, T2),
+    (2, T3),
+    (3, T4),
+    (4, T5),
+    (5, T6),
+    (6, T7),
+    (7, T8),
+    (8, T9),
+    (9, T10),
+    (10, T11),
+    (11, T12)
+);
 
 impl<const N: usize, T> Bytes for [T; N]
 where
@@ -235,7 +302,9 @@ where
     }
 
     fn read(reader: &mut BytesReader) -> Result<Self, BytesError> {
-        let len = u64::read(reader)?.try_into().map_err(|_| BytesError::UsizeTooSmall)?;
+        let len = u64::read(reader)?
+            .try_into()
+            .map_err(|_| BytesError::UsizeTooSmall)?;
         let mut elems = Box::new_uninit_slice(len);
         for i in 0..len {
             elems[i].write(T::read(reader)?);
@@ -264,7 +333,9 @@ where
     }
 
     fn read(reader: &mut BytesReader) -> Result<Self, BytesError> {
-        let len = u64::read(reader)?.try_into().map_err(|_| BytesError::UsizeTooSmall)?;
+        let len = u64::read(reader)?
+            .try_into()
+            .map_err(|_| BytesError::UsizeTooSmall)?;
         let mut elems = Vec::with_capacity(len);
         for _ in 0..len {
             elems.push(T::read(reader)?);

@@ -58,7 +58,7 @@ pub struct Sudoku {
 impl From<&Sudoku> for Graph<u8> {
     fn from(sudoku: &Sudoku) -> Self {
         // One node for each cell, as well as nine nodes for each constraint for the given cells.
-        let mut nodes = Box::new_uninit_slice(90);
+        let mut nodes = Vec::with_capacity(90);
 
         // Each row has 9 * 8 / 2 edges and there are 9 rows, making a total of 324 edges.
         // By symmetry, each column has the same number of edges as the rows.
@@ -67,21 +67,18 @@ impl From<&Sudoku> for Graph<u8> {
         // Each given number has 8 edges, one for each constraint node that is not equal to the
         // given number.
         let expected_num_edges = 810 + 8 * sudoku.given.len();
-        let mut edges = Box::new_uninit_slice(expected_num_edges);
-        let mut num_edges = 0;
+        let mut edges = Vec::with_capacity(expected_num_edges);
 
         for (y, row) in sudoku.grid.into_iter().enumerate() {
             for (x, cell) in row.into_iter().enumerate() {
-                nodes[9 * y + x].write(cell);
+                nodes.push(cell);
 
                 for i in x + 1..9 {
-                    edges[num_edges].write(Edge(9 * y + x, 9 * y + i));
-                    num_edges += 1;
+                    edges.push(Edge(9 * y + x, 9 * y + i));
                 }
 
                 for j in y + 1..9 {
-                    edges[num_edges].write(Edge(9 * y + x, 9 * j + x));
-                    num_edges += 1;
+                    edges.push(Edge(9 * y + x, 9 * j + x));
                 }
 
                 for (i, j) in (y + 1..(y + 3) / 3 * 3).flat_map(|j| {
@@ -90,31 +87,25 @@ impl From<&Sudoku> for Graph<u8> {
                         .filter(|i| *i != x)
                         .map(move |i| (i, j))
                 }) {
-                    edges[num_edges].write(Edge(9 * y + x, 9 * j + i));
-                    num_edges += 1;
+                    edges.push(Edge(9 * y + x, 9 * j + i));
                 }
             }
         }
 
-        for v in 1..=9 {
-            nodes[80 + v as usize].write(v);
-        }
+        // The constraint nodes for the given numbers.
+        nodes.extend(1..=9);
 
         for (i, j) in sudoku.given.iter().copied() {
             let value = sudoku.grid[j][i];
             for v in (1..=9).filter(|v| *v != value) {
-                edges[num_edges].write(Edge(9 * j + i, 80 + v as usize));
-                num_edges += 1;
+                edges.push(Edge(9 * j + i, 80 + v as usize));
             }
         }
 
-        debug_assert_eq!(num_edges, expected_num_edges);
-
-        // SAFETY: All elements have been initialized by the logic of the comments in this function.
-        let (nodes, edges) = unsafe { (nodes.assume_init(), edges.assume_init()) };
+        debug_assert_eq!(edges.len(), expected_num_edges);
 
         Self {
-            nodes,
+            nodes: nodes.into(),
             edges: edges.into(),
         }
     }
